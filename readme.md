@@ -1,7 +1,3 @@
-Here’s a structured **`README.md`** for your AWS Step Functions and EMR-based data pipeline:  
-
----
-
 # **AWS Step Functions EMR Pipeline**  
 
 ## **Overview**  
