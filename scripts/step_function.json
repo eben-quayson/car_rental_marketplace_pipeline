@@ -1,0 +1,195 @@
+{
+    "Comment": "Step Functions for Automating EMR Spark Processing",
+    "StartAt": "Start EMR Cluster",
+    "States": {
+      "Start EMR Cluster": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::elasticmapreduce:createCluster.sync",
+        "Parameters": {
+          "Name.$": "$.emrClusterName",
+          "LogUri.$": "$.logUri",
+          "ReleaseLabel.$": "$.releaseLabel",
+          "Applications": [
+            { "Name": "Hadoop" },
+            { "Name": "Spark" },
+            { "Name": "Hive" }
+          ],
+          "Instances": {
+            "KeepJobFlowAliveWhenNoSteps": true,
+            "InstanceGroups": [
+              {
+                "Name": "Master node",
+                "Market": "ON_DEMAND",
+                "InstanceRole": "MASTER",
+                "InstanceType.$": "$.masterInstanceType",
+                "InstanceCount.$": "$.masterInstanceCount"
+              },
+              {
+                "Name": "Core nodes",
+                "Market": "ON_DEMAND",
+                "InstanceRole": "CORE",
+                "InstanceType.$": "$.coreInstanceType",
+                "InstanceCount.$": "$.coreInstanceCount"
+              }
+            ],
+            "Ec2SubnetId.$": "$.subnetId",
+            "EmrManagedMasterSecurityGroup.$": "$.masterSecurityGroup",
+            "EmrManagedSlaveSecurityGroup.$": "$.slaveSecurityGroup"
+          },
+          "VisibleToAllUsers": true,
+          "JobFlowRole.$": "$.jobFlowRole",
+          "ServiceRole.$": "$.serviceRole",
+          "Configurations": [
+            {
+              "Classification": "spark-defaults",
+              "Properties": {
+                "spark.driver.memory.$": "$.spark.driver.memory",
+                "spark.executor.memory.$": "$.spark.executor.memory",
+                "spark.executor.cores.$": "$.spark.executor.cores"
+              }
+            }
+          ]
+        },
+        "ResultPath": "$.EMROutput",
+        "Next": "Run Spark Job 1"
+      },
+      "Run Spark Job 1": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::elasticmapreduce:addStep.sync",
+        "Parameters": {
+          "ClusterId.$": "$.EMROutput.ClusterId",
+          "Step": {
+            "Name.$": "$.sparkJob1.name",
+            "ActionOnFailure": "CONTINUE",
+            "HadoopJarStep": {
+              "Jar": "command-runner.jar",
+              "Args": [
+                "spark-submit",
+                "--master", "yarn",
+                "--deploy-mode", "cluster",
+                "--verbose",
+                {
+                  "Fn::Sub": "${sparkJob1ScriptPath}"
+                }
+              ]
+            }
+          }
+        },
+        "ResultPath": "$.SparkJob1Result",
+        "Next": "Run Spark Job 2"
+      },
+      "Run Spark Job 2": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::elasticmapreduce:addStep.sync",
+        "Parameters": {
+          "ClusterId.$": "$.EMROutput.ClusterId",
+          "Step": {
+            "Name.$": "$.sparkJob2.name",
+            "ActionOnFailure": "CONTINUE",
+            "HadoopJarStep": {
+              "Jar": "command-runner.jar",
+              "Args": [
+                "spark-submit",
+                "--master", "yarn",
+                "--deploy-mode", "cluster",
+                "--verbose",
+                {
+                  "Fn::Sub": "${sparkJob2ScriptPath}"
+                }
+              ]
+            }
+          }
+        },
+        "ResultPath": "$.SparkJob2Result",
+        "Next": "Trigger Glue Crawler"
+      },
+      "Trigger Glue Crawler": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+        "Parameters": {
+          "Name.$": "$.crawlerName"
+        },
+        "ResultPath": "$.GlueCrawlerResult",
+        "Next": "Wait For Crawler Completion"
+      },
+      "Wait For Crawler Completion": {
+        "Type": "Wait",
+        "Seconds.$": "$.waitSeconds",
+        "Next": "Parallel Athena Queries"
+      },
+      "Parallel Athena Queries": {
+        "Type": "Parallel",
+        "Branches": [
+          {
+            "StartAt": "Run Athena Query 1",
+            "States": {
+              "Run Athena Query 1": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                "Parameters": {
+                  "QueryString.$": "$.athena.query1.queryString",
+                  "QueryExecutionContext": {
+                    "Database.$": "$.athena.database"
+                  },
+                  "ResultConfiguration": {
+                    "OutputLocation.$": "$.athena.outputLocation"
+                  }
+                },
+                "End": true
+              }
+            }
+          },
+          {
+            "StartAt": "Run Athena Query 2",
+            "States": {
+              "Run Athena Query 2": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                "Parameters": {
+                  "QueryString.$": "$.athena.query2.queryString",
+                  "QueryExecutionContext": {
+                    "Database.$": "$.athena.database"
+                  },
+                  "ResultConfiguration": {
+                    "OutputLocation.$": "$.athena.outputLocation"
+                  }
+                },
+                "End": true
+              }
+            }
+          },
+          {
+            "StartAt": "Run Athena Query 3",
+            "States": {
+              "Run Athena Query 3": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                "Parameters": {
+                  "QueryString.$": "$.athena.query3.queryString",
+                  "QueryExecutionContext": {
+                    "Database.$": "$.athena.database"
+                  },
+                  "ResultConfiguration": {
+                    "OutputLocation.$": "$.athena.outputLocation"
+                  }
+                },
+                "End": true
+              }
+            }
+          }
+        ],
+        "ResultPath": "$.AthenaResults",
+        "Next": "Terminate EMR Cluster"
+      },
+      "Terminate EMR Cluster": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::elasticmapreduce:terminateCluster.sync",
+        "Parameters": {
+          "ClusterId.$": "$.EMROutput.ClusterId"
+        },
+        "ResultPath": "$.TerminateResult",
+        "End": true
+      }
+    }
+  }
+  
